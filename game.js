@@ -431,7 +431,37 @@ function endGame(win) {
 
 function shareResult() {
     // Generate emoji grid
-    let text = `Neno ${guesses.length}/${NUMBER_OF_GUESSES}\n\n`;
+    let title = 'Neno';
+    if (gameMode === 'daily' && dailyIndex !== null) {
+        // Offset daily index to start from #1 (or a specific epoch if desired)
+        // Since we are using raw epoch days, let's just make it #dailyIndex or reset to 1 from launch date?
+        // User said "start from one".
+        // Let's define a START_EPOCH for Neno.
+        // Today (Jan 9 2026) is approx 20462 days since 1970.
+        // Let's just use dailyIndex - 20460 to start recently? Or just use dailyIndex.
+        // User said "start from one". 
+        // Let's presume today is Day 1.
+        const START_EPOCH = 20455; // Adjust this to match "Day 1" logic if needed, or just use dailyIndex
+        // Actually, simpler: Just use dailyIndex for now, or ask user?
+        // User said: "i think we could start from one".
+        // Let's hardcode a start date relative to today.
+        // If today is index X, and we want it to be 1, we subtract X-1.
+        // I'll assume today is Day 1.
+        const offset = 20462; // Today's approximate epoch day
+        // But safer: just use a fixed number or the raw index?
+        // Let's use the raw dailyIndex but offset it so today is Day 1.
+        // dailyIndex = Math.floor(Date.now() / 86400000).
+        // I will calculate the 'start offset' dynamically or just hardcode it. 
+        // Let's pick a 'Day 0' as yesterday.
+        // To be safe, I'll calculate it relative to a fixed date: Jan 8 2026.
+        const startDate = new Date('2026-01-08T00:00:00Z').getTime() / 86400000;
+        const dayNumber = Math.floor(dailyIndex - startDate);
+        title += ` #${dayNumber}`;
+    } else {
+        title += ' ∞'; // Infinity symbol for unlimited
+    }
+
+    let text = `${title} ${guesses.length}/${NUMBER_OF_GUESSES}\n\n`;
     for (const guess of guesses) {
         let rowStr = "";
         const solChars = solution.split("");
