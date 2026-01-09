@@ -25,13 +25,17 @@ body {
   padding: 0;
   width: 100vw;
   height: 100vh;
+  /* Fallback */
+  height: 100dvh;
+  /* Dynamic viewport height for mobile */
   background-color: var(--color-default);
   color: var(--color-text);
   font-family: 'Clear Sans', 'Helvetica Neue', Arial, sans-serif;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  /* Changed from space-between to allow better control */
   overflow: hidden;
 }
 
@@ -78,6 +82,7 @@ h1 {
   flex-grow: 1;
   overflow: hidden;
   width: 100%;
+  padding-bottom: 10px;
 }
 
 #board {
@@ -139,12 +144,15 @@ h1 {
 
 /* Keyboard */
 #keyboard-container {
-  height: 200px;
+  height: auto;
   width: 100%;
   max-width: 500px;
   /* Compact width */
-  padding: 0 8px;
+  padding: 5px 8px 20px 8px;
+  /* Added bottom padding for mobile safe area */
   user-select: none;
+  flex-shrink: 0;
+  /* Ensure keyboard doesn't shrink */
 }
 
 .keyboard-row {
@@ -342,7 +350,48 @@ h1 {
   }
 
   .key {
-    height: 45px;
+    height: 50px;
+    /* Slightly taller for better touch */
     font-size: 14px;
   }
+}
+
+/* Persistent Controls */
+.game-controls {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 10px;
+  width: 100%;
+  max-width: 500px;
+  padding: 0 10px;
+}
+
+.game-controls.hidden {
+  display: none !important;
+}
+
+.control-btn {
+  background-color: var(--key-bg);
+  color: var(--color-text);
+  border: none;
+  padding: 10px 15px;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  flex: 1;
+  font-size: 14px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.control-btn.accent {
+  background-color: var(--color-correct);
+}
+
+.control-btn:active {
+  opacity: 0.8;
 }

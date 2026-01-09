@@ -1,7 +1,5 @@
 import { WORDS } from './words.js';
 
-// v1.1 - Fixed sharing and added Close button
-
 const NUMBER_OF_GUESSES = 6;
 const WORD_LENGTH = 5;
 
@@ -58,7 +56,11 @@ function initGame() {
     guesses = [];
     currentGuess = "";
     gameOver = false;
+    guesses = [];
+    currentGuess = "";
+    gameOver = false;
     document.getElementById("game-over-modal").classList.remove("show");
+    document.getElementById("game-controls").classList.add("hidden"); // Hide controls on new game
 
     if (gameMode === 'daily') {
         const today = new Date();
@@ -399,6 +401,31 @@ function endGame(win) {
         };
 
         modal.classList.add("show");
+
+        // Show persistent controls (behind modal, visible when closed)
+        const controls = document.getElementById("game-controls");
+        controls.classList.remove("hidden");
+
+        // Setup Persistent Buttons
+        document.getElementById("persistent-share-btn").onclick = shareResult;
+        document.getElementById("persistent-meaning-btn").onclick = () => {
+            window.open(`https://www.google.com/search?q=meaning+of+${solution}+in+swahili`, "_blank");
+        };
+
+        const pNextBtn = document.getElementById("persistent-next-btn");
+        if (gameMode === 'daily') {
+            pNextBtn.innerHTML = "Cheza Bila Kikomo ➡️"; // Play Unlimited
+            pNextBtn.onclick = () => {
+                gameMode = 'unlimited';
+                initGame();
+            };
+        } else {
+            pNextBtn.innerHTML = "Cheza Tena ➡️"; // Play Again
+            pNextBtn.onclick = () => {
+                initGame();
+            };
+        }
+
     }, WORD_LENGTH * 300 + 500); // 1500 + 500 = 2000ms delay to wait for animation
 }
 
