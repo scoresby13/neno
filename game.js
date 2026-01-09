@@ -441,17 +441,27 @@ function shareResult() {
         text += rowStates.join("") + "\n";
     }
 
+    // Append URL to the text itself to ensure it survives "Copy" actions
+    const fullText = text + "\n" + window.location.href;
+
     const shareData = {
         title: 'Neno',
-        text: text,
-        url: window.location.href
+        text: fullText
+        // url: window.location.href // Intentionally omitted to force text sharing
     };
 
     if (navigator.share) {
-        navigator.share(shareData).catch(console.error);
+        navigator.share(shareData).catch((err) => {
+            console.error(err);
+            // Fallback if share fails (e.g., user cancel or unsupported format)
+            // But usually catch isn't triggered for simple cancel.
+            // If it fails seriously, we try clipboard.
+            navigator.clipboard.writeText(fullText);
+            showToast("Imenakiliwa! (Copied to clipboard)");
+        });
     } else {
         // Fallback
-        navigator.clipboard.writeText(text + "\n" + window.location.href);
+        navigator.clipboard.writeText(fullText);
         showToast("Imenakiliwa! (Copied to clipboard)");
     }
 }
