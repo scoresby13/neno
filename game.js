@@ -357,6 +357,7 @@ function endGame(win) {
         const playAgainBtn = document.getElementById("play-again-btn");
         const shareBtn = document.getElementById("share-btn"); // Added this line
         const meaningBtn = document.getElementById("meaning-btn"); // Added this line
+        const closeResultsBtn = document.getElementById("game-over-close");
 
         title.textContent = win ? getFeedback(guesses.length) : "Pole! (Game Over)";
 
@@ -375,6 +376,10 @@ function endGame(win) {
         }
 
         // Setup Button Listeners
+        closeResultsBtn.onclick = () => {
+            modal.classList.remove("show");
+        };
+
         unlimitedBtn.onclick = () => {
             gameMode = 'unlimited';
             modal.classList.remove("show");
