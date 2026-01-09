@@ -1,5 +1,7 @@
 import { WORDS } from './words.js';
 
+// v1.1 - Fixed sharing and added Close button
+
 const NUMBER_OF_GUESSES = 6;
 const WORD_LENGTH = 5;
 
