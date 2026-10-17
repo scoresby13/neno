@@ -10,9 +10,9 @@
 
 <body>
     <header>
-        <button id="help-btn" class="icon-btn">?</button>
+        <button id="help-btn" class="icon-btn" aria-label="Jinsi ya Kucheza (How to Play)">?</button>
         <h1>Neno</h1>
-        <div class="spacer"></div> <!-- To center title properly with icon on left -->
+        <button id="stats-btn" class="icon-btn" aria-label="Takwimu (Statistics)">📊</button>
     </header>
 
     <div id="board-container">
@@ -62,7 +62,7 @@
                 <div class="tile small">P</div>
                 <div class="tile small">O</div>
             </div>
-            <p>Herufi <strong>L</strong> ipo katika neno lakiniipo mahali pasipo sahihi (Present).</p>
+            <p>Herufi <strong>L</strong> ipo katika neno lakini ipo mahali pasipo sahihi (Present).</p>
 
             <div class="example-row">
                 <div class="tile small">J</div>
@@ -72,6 +72,20 @@
                 <div class="tile small">O</div>
             </div>
             <p>Herufi <strong>B</strong> haipo katika neno kabisa (Absent).</p>
+
+            <hr>
+            <p>Kibodi haina <strong>Q</strong> wala <strong>X</strong> kwa sababu herufi hizi hazitumiki katika
+                Kiswahili. Neno jipya kila siku saa sita usiku (EAT).</p>
+            <p>(No Q or X on the keyboard: Swahili doesn't use them. A new daily word every midnight, East Africa
+                Time.)</p>
+        </div>
+    </div>
+
+    <!-- Stats Modal -->
+    <div id="stats-modal" class="modal">
+        <div class="content">
+            <button class="close-btn" style="position: absolute; top: 10px; right: 15px;">&times;</button>
+            <div id="stats-modal-body" class="stats"></div>
         </div>
     </div>
 
@@ -82,7 +96,7 @@
                 style="position: absolute; top: 10px; right: 15px;">&times;</button>
             <h2 id="result-title">Matokeo</h2> <!-- Results -->
             <p id="solution-reveal"></p>
-            <div id="stats"></div>
+            <div id="stats" class="stats"></div>
             <button id="share-btn" class="btn">Share 📤</button>
             <button id="meaning-btn" class="btn btn-secondary">Maana 📖</button> <!-- Meaning -->
             <br /><br />
@@ -93,8 +107,7 @@
     </div>
 
     <!-- Toast / Notification container -->
-    <div id="toast-container"
-        style="position: absolute; top: 10%; left: 50%; transform: translateX(-50%); z-index: 2000;"></div>
+    <div id="toast-container"></div>
 
     <script type="module" src="game.js"></script>
 </body>

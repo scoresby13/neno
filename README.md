@@ -15,8 +15,10 @@ Bashiri **NENO** la herufi 5 katika majaribio 6.
 - ⬜ **Gray**: Herufi haipo kabisa.
 
 ## Features
-- **Daily Challenge**: A new word every day (Global/Universal).
+- **Daily Challenge**: A new word every day for everyone, changing at midnight East Africa Time.
 - **Unlimited Mode**: Play as much as you want after the daily challenge.
+- **Statistics**: Games played, win %, streaks, and guess distribution (📊).
+- **Swahili Keyboard**: No Q or X, since Swahili doesn't use them.
 - **Share**: Share your results with emoji grids (🟩🟨⬜).
 - **Definitions**: Learn the meaning of the word via Google Search integration.
 
