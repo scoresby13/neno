@@ -1,4 +1,5 @@
 import { WORDS } from './words.js';
+import { ANSWERS } from './answers.js';
 
 const NUMBER_OF_GUESSES = 6;
 const WORD_LENGTH = 5;
@@ -10,18 +11,21 @@ const DAY_MS = 86400000;
 const DAY_OFFSET_MS = 3 * 60 * 60 * 1000;
 // Share numbering: 8 Jan 2026 is Neno #0
 const FIRST_DAY = Date.UTC(2026, 0, 8) / DAY_MS;
+// Day the ANSWERS schedule starts on (its first word)
+const SCHEDULE_START_DAY = Date.UTC(2026, 9, 18) / DAY_MS;
 
 // Swahili doesn't use Q or X
 const KEYBOARD_ROWS = ["wertyuiop", "asdfghjkl", "zcvbnm"];
 const LETTERS = new Set(KEYBOARD_ROWS.join(""));
 
-const VALID_WORDS = new Set(WORDS);
-// WORDS is alphabetical, so daily words follow a fixed shuffled order instead.
-// Note: adding or removing words changes this order.
-const DAILY_WORDS = seededShuffle(WORDS, 20260108);
+// Answers are common words; any word in WORDS is accepted as a guess
+const ANSWER_WORDS = Object.keys(ANSWERS);
+const VALID_WORDS = new Set([...WORDS, ...ANSWER_WORDS]);
 
 const KEY_PRIORITY = { absent: 1, present: 2, correct: 3 };
 const EMOJI = { correct: "🟩", present: "🟨", absent: "⬜" };
+const HIGH_CONTRAST_EMOJI = { correct: "🟧", present: "🟦", absent: "⬜" };
+const ORDINALS = ["1st", "2nd", "3rd", "4th", "5th"];
 
 // Game State
 let solution = ""; // The word to guess
@@ -32,30 +36,20 @@ let isRevealing = false; // Block input while tiles flip
 let gameMode = 'daily'; // 'daily' or 'unlimited'
 let dailyIndex = null;
 let countdownTimer = null;
+let settings = loadSettings(); // { hardMode, highContrast, lightTheme }
 
 // Initialization
 document.addEventListener("DOMContentLoaded", () => {
     setupKeyboard();
     setupModals();
+    setupSettings();
     setupButtons();
     initGame();
 });
 
-function seededShuffle(list, seed) {
-    // mulberry32 PRNG, so every player gets the same order
-    let a = seed;
-    const random = () => {
-        a = (a + 0x6D2B79F5) | 0;
-        let t = Math.imul(a ^ (a >>> 15), 1 | a);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-    const result = [...list];
-    for (let i = result.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1));
-        [result[i], result[j]] = [result[j], result[i]];
-    }
-    return result;
+function getDailyWord(dayIndex) {
+    const n = ANSWER_WORDS.length;
+    return ANSWER_WORDS[(((dayIndex - SCHEDULE_START_DAY) % n) + n) % n];
 }
 
 function getDayIndex() {
@@ -118,13 +112,13 @@ function initGame() {
         if (savedData) {
             guesses = savedData.guesses;
             savedStatus = savedData.status;
-            // Saves from before the shuffled order don't store the word; they used the alphabetical order
+            // Saves from before answers.js don't store the word; they used the alphabetical order
             solution = savedData.solution || WORDS[dailyIndex % WORDS.length];
         } else {
-            solution = DAILY_WORDS[dailyIndex % DAILY_WORDS.length];
+            solution = getDailyWord(dailyIndex);
         }
     } else {
-        solution = WORDS[Math.floor(Math.random() * WORDS.length)];
+        solution = ANSWER_WORDS[Math.floor(Math.random() * ANSWER_WORDS.length)];
     }
 
     // Create Board grid
@@ -282,6 +276,13 @@ function submitGuess() {
         return;
     }
 
+    const hardModeError = settings.hardMode ? findHardModeViolation(currentGuess) : null;
+    if (hardModeError) {
+        showToast(hardModeError);
+        shakeRow();
+        return;
+    }
+
     const guess = currentGuess;
     guesses.push(guess);
     currentGuess = "";
@@ -326,6 +327,32 @@ function evaluateGuess(guess, answer) {
         }
     }
     return states;
+}
+
+// Hard mode: green letters must stay in place and yellow letters must be reused
+function findHardModeViolation(guess) {
+    for (const previous of guesses) {
+        const states = evaluateGuess(previous, solution);
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            if (states[i] === "correct" && guess[i] !== previous[i]) {
+                const letter = previous[i].toUpperCase();
+                return `Herufi ya ${i + 1} lazima iwe ${letter} (${ORDINALS[i]} letter must be ${letter})`;
+            }
+        }
+
+        // Each hinted letter must appear at least as often as it was hinted
+        const remaining = guess.split("");
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            if (states[i] === "absent") continue;
+            const index = remaining.indexOf(previous[i]);
+            if (index === -1) {
+                const letter = previous[i].toUpperCase();
+                return `Lazima utumie ${letter} (Guess must contain ${letter})`;
+            }
+            remaining[index] = null;
+        }
+    }
+    return null;
 }
 
 function revealRow(rowIndex, instant) {
@@ -375,6 +402,7 @@ function showResults(win) {
 
     document.getElementById("result-title").textContent = win ? getFeedback(guesses.length) : "Pole! (Game Over)";
     document.getElementById("solution-reveal").textContent = `Neno lilikuwa: ${solution.toUpperCase()}`; // The word was...
+    document.getElementById("solution-meaning").textContent = ANSWERS[solution] ? `Maana (Meaning): ${ANSWERS[solution]}` : "";
     renderStats(document.getElementById("stats"), isDaily && win ? guesses.length : null);
 
     // The daily can't be replayed, so offer unlimited mode instead
@@ -479,12 +507,15 @@ function shareResult() {
     const title = gameMode === 'daily' ? `Neno #${dailyIndex - FIRST_DAY}` : 'Neno ∞'; // Infinity symbol for unlimited
     const won = guesses[guesses.length - 1] === solution;
     const score = won ? guesses.length : "X";
+    // Hard mode can't be switched on mid-game, so if it's on now it was on all game
+    const hardMark = settings.hardMode ? "*" : "";
+    const emoji = settings.highContrast ? HIGH_CONTRAST_EMOJI : EMOJI;
     const grid = guesses
-        .map(guess => evaluateGuess(guess, solution).map(state => EMOJI[state]).join(""))
+        .map(guess => evaluateGuess(guess, solution).map(state => emoji[state]).join(""))
         .join("\n");
 
     // URL goes in the text itself so it survives "Copy" actions
-    const fullText = `${title} ${score}/${NUMBER_OF_GUESSES}\n\n${grid}\n\n${window.location.href}`;
+    const fullText = `${title} ${score}/${NUMBER_OF_GUESSES}${hardMark}\n\n${grid}\n\n${window.location.href}`;
 
     if (navigator.share) {
         navigator.share({ title: 'Neno', text: fullText }).catch((err) => {
@@ -500,6 +531,49 @@ function copyToClipboard(text) {
     navigator.clipboard.writeText(text)
         .then(() => showToast("Imenakiliwa! (Copied to clipboard)"))
         .catch(() => showToast("Imeshindikana kunakili (Could not copy)"));
+}
+
+// Settings
+function loadSettings() {
+    const defaults = { hardMode: false, highContrast: false, lightTheme: false };
+    try {
+        return { ...defaults, ...JSON.parse(localStorage.getItem('neno_settings')) };
+    } catch (e) {
+        return defaults;
+    }
+}
+
+function applyTheme() {
+    // index.html also applies these before first paint to avoid a flash
+    document.documentElement.classList.toggle("light-theme", settings.lightTheme);
+    document.documentElement.classList.toggle("high-contrast", settings.highContrast);
+}
+
+function setupSettings() {
+    const modal = document.getElementById("settings-modal");
+    const toggles = {
+        hardMode: document.getElementById("hard-mode-toggle"),
+        lightTheme: document.getElementById("light-theme-toggle"),
+        highContrast: document.getElementById("high-contrast-toggle")
+    };
+
+    document.getElementById("settings-btn").onclick = () => modal.classList.add("show");
+
+    for (const [name, toggle] of Object.entries(toggles)) {
+        toggle.checked = settings[name];
+        toggle.onchange = () => {
+            const midGame = guesses.length > 0 && !gameOver;
+            if (name === "hardMode" && toggle.checked && midGame) {
+                toggle.checked = false;
+                showToast("Washa mwanzoni mwa mchezo (Turn on at the start of a game)");
+                return;
+            }
+            settings[name] = toggle.checked;
+            localStorage.setItem('neno_settings', JSON.stringify(settings));
+            applyTheme();
+        };
+    }
+    applyTheme();
 }
 
 function getFeedback(attempts) {
