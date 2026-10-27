@@ -1,136 +1,157 @@
 import { WORDS } from './words.js';
+import { ANSWERS } from './answers.js';
 
 const NUMBER_OF_GUESSES = 6;
 const WORD_LENGTH = 5;
+const FLIP_DELAY = 300; // ms between each tile flip
+const REVEAL_TIME = WORD_LENGTH * FLIP_DELAY + 250;
+
+const DAY_MS = 86400000;
+// The daily word changes at midnight East Africa Time (UTC+3)
+const DAY_OFFSET_MS = 3 * 60 * 60 * 1000;
+// Share numbering: 8 Jan 2026 is Neno #0
+const FIRST_DAY = Date.UTC(2026, 0, 8) / DAY_MS;
+// Day the ANSWERS schedule starts on (its first word)
+const SCHEDULE_START_DAY = Date.UTC(2026, 9, 18) / DAY_MS;
+
+// Swahili doesn't use Q or X
+const KEYBOARD_ROWS = ["wertyuiop", "asdfghjkl", "zcvbnm"];
+const LETTERS = new Set(KEYBOARD_ROWS.join(""));
+
+// Answers are common words; any word in WORDS is accepted as a guess
+const ANSWER_WORDS = Object.keys(ANSWERS);
+const VALID_WORDS = new Set([...WORDS, ...ANSWER_WORDS]);
+
+const KEY_PRIORITY = { absent: 1, present: 2, correct: 3 };
+const EMOJI = { correct: "🟩", present: "🟨", absent: "⬜" };
+const HIGH_CONTRAST_EMOJI = { correct: "🟧", present: "🟦", absent: "⬜" };
+const ORDINALS = ["1st", "2nd", "3rd", "4th", "5th"];
 
 // Game State
 let solution = ""; // The word to guess
 let guesses = []; // Array of strings
 let currentGuess = ""; // Current string being typed
 let gameOver = false;
+let isRevealing = false; // Block input while tiles flip
 let gameMode = 'daily'; // 'daily' or 'unlimited'
 let dailyIndex = null;
-
-// Statistics (could be loaded from localStorage)
-let stats = {
-    gamesPlayed: 0,
-    gamesWon: 0,
-    currentStreak: 0,
-    maxStreak: 0
-};
+let countdownTimer = null;
+let settings = loadSettings(); // { hardMode, highContrast, lightTheme }
 
 // Initialization
 document.addEventListener("DOMContentLoaded", () => {
-    initGame();
     setupKeyboard();
+    setupModals();
+    setupSettings();
+    setupButtons();
     initGame();
-    setupKeyboard();
-    setupHelpModal();
 });
 
-function setupHelpModal() {
-    const modal = document.getElementById("help-modal");
-    const helpBtn = document.getElementById("help-btn");
-    const closeBtn = modal.querySelector(".close-btn");
+function getDailyWord(dayIndex) {
+    const n = ANSWER_WORDS.length;
+    return ANSWER_WORDS[(((dayIndex - SCHEDULE_START_DAY) % n) + n) % n];
+}
 
-    // Close on click outside
-    window.addEventListener("click", (e) => {
-        if (e.target === modal) modal.classList.remove("show");
+function getDayIndex() {
+    return Math.floor((Date.now() + DAY_OFFSET_MS) / DAY_MS);
+}
+
+function setupModals() {
+    document.querySelectorAll(".modal").forEach(modal => {
+        // Close on click outside (on the backdrop) or on the X
+        modal.addEventListener("click", (e) => {
+            if (e.target === modal) modal.classList.remove("show");
+        });
+        modal.querySelector(".close-btn").onclick = () => modal.classList.remove("show");
     });
 
-    closeBtn.onclick = () => modal.classList.remove("show");
-    helpBtn.onclick = () => modal.classList.add("show");
+    const helpModal = document.getElementById("help-modal");
+    document.getElementById("help-btn").onclick = () => helpModal.classList.add("show");
 
-    // Show on first visit
+    document.getElementById("stats-btn").onclick = () => {
+        renderStats(document.getElementById("stats-modal-body"));
+        document.getElementById("stats-modal").classList.add("show");
+    };
+
+    // Show help on first visit
     if (!localStorage.getItem("neno_visited")) {
-        modal.classList.add("show");
+        helpModal.classList.add("show");
         localStorage.setItem("neno_visited", "true");
     }
 }
 
-function initGame() {
-    const board = document.getElementById("board");
-    board.innerHTML = "";
+function setupButtons() {
+    const playUnlimited = () => {
+        gameMode = 'unlimited';
+        initGame();
+    };
+    document.getElementById("unlimited-btn").onclick = playUnlimited;
+    document.getElementById("play-again-btn").onclick = playUnlimited;
+    document.getElementById("persistent-next-btn").onclick = playUnlimited;
 
-    // Reset core vars
+    document.getElementById("share-btn").onclick = shareResult;
+    document.getElementById("persistent-share-btn").onclick = shareResult;
+
+    document.getElementById("meaning-btn").onclick = openMeaning;
+    document.getElementById("persistent-meaning-btn").onclick = openMeaning;
+}
+
+function initGame() {
     guesses = [];
     currentGuess = "";
     gameOver = false;
-    guesses = [];
-    currentGuess = "";
-    gameOver = false;
+    isRevealing = false;
+    let savedStatus = null;
+
     document.getElementById("game-over-modal").classList.remove("show");
     document.getElementById("game-controls").classList.add("hidden"); // Hide controls on new game
 
     if (gameMode === 'daily') {
-        const today = new Date();
-        // Use UTC date to ensure global consistency or Local date?
-        // Plan said: "Day Index using Epoch time / 24 hours" -> Global
-        const dayIndex = Math.floor(Date.now() / 86400000);
-        dailyIndex = dayIndex;
-
-        solution = WORDS[dayIndex % WORDS.length];
-
-        // Restore progress
-        const savedData = loadDailyProgress(); // { guesses: [], status: 'IN_PROGRESS' | 'WIN' | 'LOSS' }
-
+        dailyIndex = getDayIndex();
+        const savedData = loadDailyProgress(); // { guesses: [], status: 'IN_PROGRESS' | 'WIN' | 'LOSS', solution }
         if (savedData) {
             guesses = savedData.guesses;
-            // Re-render board
-            // We need to render rows for existing guesses
+            savedStatus = savedData.status;
+            // Saves from before answers.js don't store the word; they used the alphabetical order
+            solution = savedData.solution || WORDS[dailyIndex % WORDS.length];
+        } else {
+            solution = getDailyWord(dailyIndex);
         }
-
     } else {
-        // Unlimited
-        solution = WORDS[Math.floor(Math.random() * WORDS.length)];
+        solution = ANSWER_WORDS[Math.floor(Math.random() * ANSWER_WORDS.length)];
     }
 
     // Create Board grid
+    const board = document.getElementById("board");
+    board.innerHTML = "";
     for (let i = 0; i < NUMBER_OF_GUESSES; i++) {
         const row = document.createElement("div");
         row.className = "row";
         for (let j = 0; j < WORD_LENGTH; j++) {
             const tile = document.createElement("div");
             tile.className = "tile";
-            // Pre-fill if we have restored guesses
-            if (i < guesses.length) {
-                tile.textContent = guesses[i][j];
-                // We need to set colors too! 
-                // But revealTileColors applies animation... we want instant restore.
-            }
             row.appendChild(tile);
         }
         board.appendChild(row);
     }
 
-    // If restoring, apply colors instantly
-    if (gameMode === 'daily' && guesses.length > 0) {
-        guesses.forEach((guess, i) => {
-            revealTileColors(guess, true, i); // true = instant, pass row index
-        });
-
-        // Check if game was already over
-        const savedData = loadDailyProgress();
-        if (savedData && (savedData.status === 'WIN' || savedData.status === 'LOSS')) {
-            gameOver = true;
-            setTimeout(() => endGame(savedData.status === 'WIN'), 500);
-        }
-    }
-
     // Reset keyboard
-    const keys = document.querySelectorAll(".key");
-    keys.forEach(key => {
-        key.style.backgroundColor = "";
-    });
+    document.querySelectorAll(".key").forEach(key => delete key.dataset.state);
 
-    // Hide modals
-    document.getElementById("game-over-modal").classList.remove("show");
+    // Restore earlier guesses instantly
+    guesses.forEach((_, i) => revealRow(i, true));
+
+    if (savedStatus === 'WIN' || savedStatus === 'LOSS') {
+        gameOver = true;
+        setTimeout(() => showResults(savedStatus === 'WIN'), 500);
+    }
 }
 
 // Helper to save daily progress
 function saveDailyProgress(status = "IN_PROGRESS") {
     const data = {
         dayIndex: dailyIndex,
+        solution: solution,
         guesses: guesses,
         status: status
     };
@@ -138,44 +159,43 @@ function saveDailyProgress(status = "IN_PROGRESS") {
 }
 
 function loadDailyProgress() {
-    const data = JSON.parse(localStorage.getItem('neno_daily_progress'));
-    if (data && data.dayIndex === dailyIndex) {
-        return data;
+    try {
+        const data = JSON.parse(localStorage.getItem('neno_daily_progress'));
+        if (data && data.dayIndex === dailyIndex) {
+            return data;
+        }
+    } catch (e) {
+        // Corrupt save, start fresh
     }
     return null;
 }
 
 // User Input Handling
 document.addEventListener("keydown", (e) => {
-    if (gameOver) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return; // Leave browser shortcuts alone
 
     const key = e.key;
     if (key === "Enter") {
+        // Stop Enter from also clicking whichever button has focus
+        e.preventDefault();
         submitGuess();
     } else if (key === "Backspace") {
         deleteKey();
-    } else if (/^[a-zA-Z]$/.test(key)) {
+    } else if (key.length === 1 && LETTERS.has(key.toLowerCase())) {
         addKey(key.toLowerCase());
     }
 });
 
 function setupKeyboard() {
-    const rows = [
-        "qwertyuiop",
-        "asdfghjkl",
-        "zxcvbnm"
-    ];
-
     const container = document.getElementById("keyboard-container");
     container.innerHTML = "";
 
-    rows.forEach((rowString, index) => {
+    KEYBOARD_ROWS.forEach((rowString, index) => {
         const rowDiv = document.createElement("div");
         rowDiv.className = "keyboard-row";
+        const isLastRow = index === KEYBOARD_ROWS.length - 1;
 
-        // Add Enter buttons and Backspace to the last row for better mobile layout logic often used
-        if (index === 2) {
-            // Add Enter
+        if (isLastRow) {
             const enterKey = document.createElement("button");
             enterKey.className = "key wide";
             enterKey.textContent = "Enter";
@@ -183,7 +203,7 @@ function setupKeyboard() {
             rowDiv.appendChild(enterKey);
         }
 
-        for (let char of rowString) {
+        for (const char of rowString) {
             const button = document.createElement("button");
             button.className = "key";
             button.dataset.key = char;
@@ -192,11 +212,11 @@ function setupKeyboard() {
             rowDiv.appendChild(button);
         }
 
-        if (index === 2) {
-            // Add Backspace
+        if (isLastRow) {
             const bsKey = document.createElement("button");
             bsKey.className = "key wide";
             bsKey.textContent = "⌫";
+            bsKey.setAttribute("aria-label", "Futa (Backspace)");
             bsKey.onclick = deleteKey;
             rowDiv.appendChild(bsKey);
         }
@@ -206,6 +226,7 @@ function setupKeyboard() {
 }
 
 function addKey(key) {
+    if (gameOver || isRevealing) return;
     if (currentGuess.length < WORD_LENGTH) {
         currentGuess += key;
         updateBoard();
@@ -213,6 +234,7 @@ function addKey(key) {
 }
 
 function deleteKey() {
+    if (gameOver || isRevealing) return;
     if (currentGuess.length > 0) {
         currentGuess = currentGuess.slice(0, -1);
         updateBoard();
@@ -231,12 +253,7 @@ function updateBoard() {
 function showToast(message) {
     const container = document.getElementById("toast-container");
     const toast = document.createElement("div");
-    toast.style.background = "white";
-    toast.style.color = "black";
-    toast.style.padding = "10px 20px";
-    toast.style.borderRadius = "4px";
-    toast.style.marginBottom = "5px";
-    toast.style.fontWeight = "bold";
+    toast.className = "toast";
     toast.textContent = message;
     container.appendChild(toast);
     setTimeout(() => {
@@ -245,33 +262,41 @@ function showToast(message) {
 }
 
 function submitGuess() {
+    if (gameOver || isRevealing) return;
+
     if (currentGuess.length !== WORD_LENGTH) {
         showToast("Haitoshi (Not enough letters)");
         shakeRow();
         return;
     }
 
-    if (!WORDS.includes(currentGuess)) {
+    if (!VALID_WORDS.has(currentGuess)) {
         showToast("Si neno (Not in dictionary)");
         shakeRow();
         return;
     }
 
-    guesses.push(currentGuess);
-    revealTileColors(currentGuess);
-
-    if (currentGuess === solution) {
-        endGame(true);
-    } else if (guesses.length === NUMBER_OF_GUESSES) {
-        if (gameMode === 'daily') saveDailyProgress("LOSS");
-        endGame(false);
+    const hardModeError = settings.hardMode ? findHardModeViolation(currentGuess) : null;
+    if (hardModeError) {
+        showToast(hardModeError);
+        shakeRow();
         return;
-    } else {
-        currentGuess = "";
     }
 
-    // Save progress if daily
-    if (gameMode === 'daily') saveDailyProgress();
+    const guess = currentGuess;
+    guesses.push(guess);
+    currentGuess = "";
+    revealRow(guesses.length - 1, false);
+
+    isRevealing = true;
+    setTimeout(() => { isRevealing = false; }, REVEAL_TIME);
+
+    const won = guess === solution;
+    if (won || guesses.length === NUMBER_OF_GUESSES) {
+        endGame(won);
+    } else if (gameMode === 'daily') {
+        saveDailyProgress();
+    }
 }
 
 function shakeRow() {
@@ -280,13 +305,9 @@ function shakeRow() {
     setTimeout(() => row.classList.remove("shake"), 500);
 }
 
-// Better revealTileColors overwriting the whole function 
-function revealTileColors(guess, instant = false, specificRowIndex = null) {
-    const currentRowIndex = specificRowIndex !== null ? specificRowIndex : guesses.length - 1;
-    const row = document.getElementById("board").children[currentRowIndex];
-
-    // Check state logic (same as before)
-    const solutionChars = solution.split("");
+// Returns 'correct' | 'present' | 'absent' for each letter, handling repeated letters
+function evaluateGuess(guess, answer) {
+    const solutionChars = answer.split("");
     const guessChars = guess.split("");
     const states = new Array(WORD_LENGTH).fill("absent");
 
@@ -302,227 +323,257 @@ function revealTileColors(guess, instant = false, specificRowIndex = null) {
     for (let i = 0; i < WORD_LENGTH; i++) {
         if (guessChars[i] && solutionChars.includes(guessChars[i])) {
             states[i] = "present";
-            const index = solutionChars.indexOf(guessChars[i]);
-            solutionChars[index] = null;
+            solutionChars[solutionChars.indexOf(guessChars[i])] = null;
         }
     }
+    return states;
+}
 
-    // Apply colors
-    for (let i = 0; i < WORD_LENGTH; i++) {
+// Hard mode: green letters must stay in place and yellow letters must be reused
+function findHardModeViolation(guess) {
+    for (const previous of guesses) {
+        const states = evaluateGuess(previous, solution);
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            if (states[i] === "correct" && guess[i] !== previous[i]) {
+                const letter = previous[i].toUpperCase();
+                return `Herufi ya ${i + 1} lazima iwe ${letter} (${ORDINALS[i]} letter must be ${letter})`;
+            }
+        }
+
+        // Each hinted letter must appear at least as often as it was hinted
+        const remaining = guess.split("");
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            if (states[i] === "absent") continue;
+            const index = remaining.indexOf(previous[i]);
+            if (index === -1) {
+                const letter = previous[i].toUpperCase();
+                return `Lazima utumie ${letter} (Guess must contain ${letter})`;
+            }
+            remaining[index] = null;
+        }
+    }
+    return null;
+}
+
+function revealRow(rowIndex, instant) {
+    const guess = guesses[rowIndex];
+    const row = document.getElementById("board").children[rowIndex];
+    const states = evaluateGuess(guess, solution);
+
+    states.forEach((state, i) => {
         const tile = row.children[i];
+        tile.textContent = guess[i];
 
         if (instant) {
-            // No animation
-            tile.classList.add("flip"); // Apply flipped style (if any) or just state
-            tile.setAttribute("data-state", states[i]);
-
-            // Update keyboard instantly
-            const keyButton = document.querySelector(`.key[data-key='${guess[i]}']`);
-            if (keyButton) {
-                if (states[i] === 'correct') keyButton.style.backgroundColor = 'var(--color-correct)';
-                else if (states[i] === 'present' && keyButton.style.backgroundColor !== 'var(--color-correct)') keyButton.style.backgroundColor = 'var(--color-present)';
-                else if (states[i] === 'absent' && keyButton.style.backgroundColor !== 'var(--color-present)' && keyButton.style.backgroundColor !== 'var(--color-correct)') keyButton.style.backgroundColor = 'var(--color-absent)';
-            }
-        } else {
-            // Animation logic (existing)
-            setTimeout(() => {
-                tile.classList.add("flip");
-                tile.setAttribute("data-state", states[i]);
-            }, i * 300);
-
-            setTimeout(() => {
-                const keyButton = document.querySelector(`.key[data-key='${guess[i]}']`);
-                if (keyButton) {
-                    if (states[i] === 'correct') keyButton.style.backgroundColor = 'var(--color-correct)';
-                    else if (states[i] === 'present' && keyButton.style.backgroundColor !== 'var(--color-correct)') keyButton.style.backgroundColor = 'var(--color-present)';
-                    else if (states[i] === 'absent' && keyButton.style.backgroundColor !== 'var(--color-present)' && keyButton.style.backgroundColor !== 'var(--color-correct)') keyButton.style.backgroundColor = 'var(--color-absent)';
-                }
-            }, (i * 300) + 250);
+            tile.setAttribute("data-state", state);
+            updateKey(guess[i], state);
+            return;
         }
+
+        setTimeout(() => {
+            tile.classList.add("flip");
+            tile.setAttribute("data-state", state);
+        }, i * FLIP_DELAY);
+        setTimeout(() => updateKey(guess[i], state), i * FLIP_DELAY + 250);
+    });
+}
+
+// A key only ever upgrades: absent -> present -> correct
+function updateKey(letter, state) {
+    const key = document.querySelector(`.key[data-key='${letter}']`);
+    if (key && KEY_PRIORITY[state] > (KEY_PRIORITY[key.dataset.state] || 0)) {
+        key.dataset.state = state;
     }
 }
 
 function endGame(win) {
-    if (win) {
-        showToast(getFeedback(guesses.length));
-    }
+    gameOver = true;
 
-    // Save final state for daily
     if (gameMode === 'daily') {
         saveDailyProgress(win ? "WIN" : "LOSS");
+        recordDailyResult(win);
     }
 
-    gameOver = true;
-    setTimeout(() => {
-        const modal = document.getElementById("game-over-modal");
-        const title = document.getElementById("result-title");
-        const reveal = document.getElementById("solution-reveal");
-        const unlimitedBtn = document.getElementById("unlimited-btn");
-        const playAgainBtn = document.getElementById("play-again-btn");
-        const shareBtn = document.getElementById("share-btn"); // Added this line
-        const meaningBtn = document.getElementById("meaning-btn"); // Added this line
-        const closeResultsBtn = document.getElementById("game-over-close");
+    setTimeout(() => showResults(win), REVEAL_TIME);
+}
 
-        title.textContent = win ? getFeedback(guesses.length) : "Pole! (Game Over)";
+function showResults(win) {
+    const isDaily = gameMode === 'daily';
 
-        reveal.textContent = `Neno lilikuwa: ${solution.toUpperCase()}`; // The word was...
+    document.getElementById("result-title").textContent = win ? getFeedback(guesses.length) : "Pole! (Game Over)";
+    document.getElementById("solution-reveal").textContent = `Neno lilikuwa: ${solution.toUpperCase()}`; // The word was...
+    document.getElementById("solution-meaning").textContent = ANSWERS[solution] ? `Maana (Meaning): ${ANSWERS[solution]}` : "";
+    renderStats(document.getElementById("stats"), isDaily && win ? guesses.length : null);
 
-        // Configure buttons based on mode
-        if (gameMode === 'daily') {
-            playAgainBtn.style.display = 'none'; // Cannot replay daily immediately
-            unlimitedBtn.style.display = 'inline-block';
+    // The daily can't be replayed, so offer unlimited mode instead
+    document.getElementById("play-again-btn").style.display = isDaily ? 'none' : 'inline-block';
+    document.getElementById("unlimited-btn").style.display = isDaily ? 'inline-block' : 'none';
+    document.getElementById("persistent-next-btn").textContent = isDaily ? "Cheza Bila Kikomo ➡️" : "Cheza Tena ➡️";
 
-            // Allow replay if they want to treat it as "View Results" of today
-            // Actually, if daily is done, "Cheza Tena" makes no sense unless it goes to unlimited
-        } else {
-            playAgainBtn.style.display = 'inline-block';
-            unlimitedBtn.style.display = 'none'; // Already in unlimited
-        }
+    // Persistent controls stay visible behind the modal once it's closed
+    document.getElementById("game-controls").classList.remove("hidden");
+    document.getElementById("game-over-modal").classList.add("show");
+}
 
-        // Setup Button Listeners
-        closeResultsBtn.onclick = () => {
-            modal.classList.remove("show");
-        };
+function openMeaning() {
+    window.open(`https://www.google.com/search?q=meaning+of+${solution}+in+swahili`, "_blank");
+}
 
-        unlimitedBtn.onclick = () => {
-            gameMode = 'unlimited';
-            modal.classList.remove("show");
-            initGame();
-        };
+// Statistics (daily games only)
+function loadStats() {
+    const defaults = {
+        gamesPlayed: 0,
+        gamesWon: 0,
+        currentStreak: 0,
+        maxStreak: 0,
+        guessDistribution: new Array(NUMBER_OF_GUESSES).fill(0),
+        lastPlayedDay: null,
+        lastWonDay: null
+    };
+    try {
+        return { ...defaults, ...JSON.parse(localStorage.getItem('neno_stats')) };
+    } catch (e) {
+        return defaults;
+    }
+}
 
-        playAgainBtn.onclick = () => {
-            modal.classList.remove("show");
-            initGame();
-        };
+function recordDailyResult(win) {
+    const stats = loadStats();
+    if (stats.lastPlayedDay === dailyIndex) return; // Already counted today
 
-        shareBtn.onclick = shareResult;
-        meaningBtn.onclick = () => {
-            window.open(`https://www.google.com/search?q=meaning+of+${solution}+in+swahili`, "_blank");
-        };
+    stats.lastPlayedDay = dailyIndex;
+    stats.gamesPlayed++;
+    if (win) {
+        stats.gamesWon++;
+        stats.guessDistribution[guesses.length - 1]++;
+        stats.currentStreak = stats.lastWonDay === dailyIndex - 1 ? stats.currentStreak + 1 : 1;
+        stats.maxStreak = Math.max(stats.maxStreak, stats.currentStreak);
+        stats.lastWonDay = dailyIndex;
+    } else {
+        stats.currentStreak = 0;
+    }
+    localStorage.setItem('neno_stats', JSON.stringify(stats));
+}
 
-        modal.classList.add("show");
+function renderStats(container, highlightGuesses = null) {
+    const stats = loadStats();
+    // A streak is broken once a whole day passes without a win
+    const streakAlive = stats.lastWonDay !== null && stats.lastWonDay >= getDayIndex() - 1;
+    const winPercent = stats.gamesPlayed ? Math.round(stats.gamesWon / stats.gamesPlayed * 100) : 0;
+    const maxCount = Math.max(1, ...stats.guessDistribution);
 
-        // Show persistent controls (behind modal, visible when closed)
-        const controls = document.getElementById("game-controls");
-        controls.classList.remove("hidden");
+    const summary = [
+        [stats.gamesPlayed, "Michezo<br>(Played)"],
+        [winPercent, "% Ushindi<br>(Win %)"],
+        [streakAlive ? stats.currentStreak : 0, "Mfululizo<br>(Streak)"],
+        [stats.maxStreak, "Bora<br>(Max Streak)"]
+    ].map(([value, label]) =>
+        `<div class="stat"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`
+    ).join("");
 
-        // Setup Persistent Buttons
-        document.getElementById("persistent-share-btn").onclick = shareResult;
-        document.getElementById("persistent-meaning-btn").onclick = () => {
-            window.open(`https://www.google.com/search?q=meaning+of+${solution}+in+swahili`, "_blank");
-        };
+    const distribution = stats.guessDistribution.map((count, i) => {
+        const highlight = highlightGuesses === i + 1 ? " highlight" : "";
+        const width = Math.max(8, Math.round(count / maxCount * 100));
+        return `<div class="dist-row"><span class="dist-guess">${i + 1}</span>` +
+            `<div class="dist-bar${highlight}" style="width: ${width}%">${count}</div></div>`;
+    }).join("");
 
-        const pNextBtn = document.getElementById("persistent-next-btn");
-        if (gameMode === 'daily') {
-            pNextBtn.innerHTML = "Cheza Bila Kikomo ➡️"; // Play Unlimited
-            pNextBtn.onclick = () => {
-                gameMode = 'unlimited';
-                initGame();
-            };
-        } else {
-            pNextBtn.innerHTML = "Cheza Tena ➡️"; // Play Again
-            pNextBtn.onclick = () => {
-                initGame();
-            };
-        }
+    container.innerHTML = `
+        <h3>Takwimu (Statistics)</h3>
+        <div class="stats-row">${summary}</div>
+        <h3>Majaribio (Guess Distribution)</h3>
+        <div class="distribution">${distribution}</div>
+        <p class="countdown">Neno lijalo (Next word): <strong class="countdown-time"></strong></p>
+    `;
 
-    }, WORD_LENGTH * 300 + 500); // 1500 + 500 = 2000ms delay to wait for animation
+    startCountdown();
+}
+
+function startCountdown() {
+    const update = () => {
+        const msLeft = DAY_MS - ((Date.now() + DAY_OFFSET_MS) % DAY_MS);
+        const totalSeconds = Math.floor(msLeft / 1000);
+        const time = [Math.floor(totalSeconds / 3600), Math.floor(totalSeconds / 60) % 60, totalSeconds % 60]
+            .map(n => String(n).padStart(2, "0"))
+            .join(":");
+        document.querySelectorAll(".countdown-time").forEach(el => { el.textContent = time; });
+    };
+    update();
+    clearInterval(countdownTimer);
+    countdownTimer = setInterval(update, 1000);
 }
 
 function shareResult() {
-    // Generate emoji grid
-    let title = 'Neno';
-    if (gameMode === 'daily' && dailyIndex !== null) {
-        // Offset daily index to start from #1 (or a specific epoch if desired)
-        // Since we are using raw epoch days, let's just make it #dailyIndex or reset to 1 from launch date?
-        // User said "start from one".
-        // Let's define a START_EPOCH for Neno.
-        // Today (Jan 9 2026) is approx 20462 days since 1970.
-        // Let's just use dailyIndex - 20460 to start recently? Or just use dailyIndex.
-        // User said "start from one". 
-        // Let's presume today is Day 1.
-        const START_EPOCH = 20455; // Adjust this to match "Day 1" logic if needed, or just use dailyIndex
-        // Actually, simpler: Just use dailyIndex for now, or ask user?
-        // User said: "i think we could start from one".
-        // Let's hardcode a start date relative to today.
-        // If today is index X, and we want it to be 1, we subtract X-1.
-        // I'll assume today is Day 1.
-        const offset = 20462; // Today's approximate epoch day
-        // But safer: just use a fixed number or the raw index?
-        // Let's use the raw dailyIndex but offset it so today is Day 1.
-        // dailyIndex = Math.floor(Date.now() / 86400000).
-        // I will calculate the 'start offset' dynamically or just hardcode it. 
-        // Let's pick a 'Day 0' as yesterday.
-        // To be safe, I'll calculate it relative to a fixed date: Jan 8 2026.
-        const startDate = new Date('2026-01-08T00:00:00Z').getTime() / 86400000;
-        const dayNumber = Math.floor(dailyIndex - startDate);
-        title += ` #${dayNumber}`;
-    } else {
-        title += ' ∞'; // Infinity symbol for unlimited
-    }
+    const title = gameMode === 'daily' ? `Neno #${dailyIndex - FIRST_DAY}` : 'Neno ∞'; // Infinity symbol for unlimited
+    const won = guesses[guesses.length - 1] === solution;
+    const score = won ? guesses.length : "X";
+    // Hard mode can't be switched on mid-game, so if it's on now it was on all game
+    const hardMark = settings.hardMode ? "*" : "";
+    const emoji = settings.highContrast ? HIGH_CONTRAST_EMOJI : EMOJI;
+    const grid = guesses
+        .map(guess => evaluateGuess(guess, solution).map(state => emoji[state]).join(""))
+        .join("\n");
 
-    let text = `${title} ${guesses.length}/${NUMBER_OF_GUESSES}\n\n`;
-    for (const guess of guesses) {
-        let rowStr = "";
-        const solChars = solution.split("");
-        // Re-calculate states for emojis
-        // Note: For perfect accuracy we should reuse the logic in revealTileColors
-        // But for simplicity of this snippet:
-        // (This simple check is flawed for duplicate letters but sufficient for MVP visualization typically)
-        // Let's copy logic from revealTileColors roughly or just store the states.
-        // Actually, let's just cheat and check char by char for now, fixing duplicates is better.
-
-        // Correct logic:
-        const gChars = guess.split("");
-        const sChars = solution.split("");
-        const rowStates = new Array(5).fill("⬛"); // or ⬜
-
-        // Green pass
-        for (let i = 0; i < 5; i++) {
-            if (gChars[i] === sChars[i]) {
-                rowStates[i] = "🟩";
-                sChars[i] = null;
-                gChars[i] = null;
-            }
-        }
-        // Yellow pass
-        for (let i = 0; i < 5; i++) {
-            if (gChars[i] !== null && sChars.includes(gChars[i])) {
-                rowStates[i] = "🟨";
-                sChars[sChars.indexOf(gChars[i])] = null;
-            }
-        }
-        // Black pass
-        for (let i = 0; i < 5; i++) {
-            if (rowStates[i] === "⬛") rowStates[i] = "⬜"; // Use white for absent in dark mode
-        }
-
-        text += rowStates.join("") + "\n";
-    }
-
-    // Append URL to the text itself to ensure it survives "Copy" actions
-    const fullText = text + "\n" + window.location.href;
-
-    const shareData = {
-        title: 'Neno',
-        text: fullText
-        // url: window.location.href // Intentionally omitted to force text sharing
-    };
+    // URL goes in the text itself so it survives "Copy" actions
+    const fullText = `${title} ${score}/${NUMBER_OF_GUESSES}${hardMark}\n\n${grid}\n\n${window.location.href}`;
 
     if (navigator.share) {
-        navigator.share(shareData).catch((err) => {
-            console.error(err);
-            // Fallback if share fails (e.g., user cancel or unsupported format)
-            // But usually catch isn't triggered for simple cancel.
-            // If it fails seriously, we try clipboard.
-            navigator.clipboard.writeText(fullText);
-            showToast("Imenakiliwa! (Copied to clipboard)");
+        navigator.share({ title: 'Neno', text: fullText }).catch((err) => {
+            // Cancelling the share sheet isn't an error
+            if (err.name !== 'AbortError') copyToClipboard(fullText);
         });
     } else {
-        // Fallback
-        navigator.clipboard.writeText(fullText);
-        showToast("Imenakiliwa! (Copied to clipboard)");
+        copyToClipboard(fullText);
     }
+}
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text)
+        .then(() => showToast("Imenakiliwa! (Copied to clipboard)"))
+        .catch(() => showToast("Imeshindikana kunakili (Could not copy)"));
+}
+
+// Settings
+function loadSettings() {
+    const defaults = { hardMode: false, highContrast: false, lightTheme: false };
+    try {
+        return { ...defaults, ...JSON.parse(localStorage.getItem('neno_settings')) };
+    } catch (e) {
+        return defaults;
+    }
+}
+
+function applyTheme() {
+    // index.html also applies these before first paint to avoid a flash
+    document.documentElement.classList.toggle("light-theme", settings.lightTheme);
+    document.documentElement.classList.toggle("high-contrast", settings.highContrast);
+}
+
+function setupSettings() {
+    const modal = document.getElementById("settings-modal");
+    const toggles = {
+        hardMode: document.getElementById("hard-mode-toggle"),
+        lightTheme: document.getElementById("light-theme-toggle"),
+        highContrast: document.getElementById("high-contrast-toggle")
+    };
+
+    document.getElementById("settings-btn").onclick = () => modal.classList.add("show");
+
+    for (const [name, toggle] of Object.entries(toggles)) {
+        toggle.checked = settings[name];
+        toggle.onchange = () => {
+            const midGame = guesses.length > 0 && !gameOver;
+            if (name === "hardMode" && toggle.checked && midGame) {
+                toggle.checked = false;
+                showToast("Washa mwanzoni mwa mchezo (Turn on at the start of a game)");
+                return;
+            }
+            settings[name] = toggle.checked;
+            localStorage.setItem('neno_settings', JSON.stringify(settings));
+            applyTheme();
+        };
+    }
+    applyTheme();
 }
 
 function getFeedback(attempts) {
